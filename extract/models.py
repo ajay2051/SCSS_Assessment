@@ -1,26 +1,19 @@
-import hashlib
-
 from django.db import models
 
 
-class PDFDocument(models.Model):
-    file = models.FileField(upload_to='pdfs/')
+class Pdf(models.Model):
+    file = models.FileField(upload_to='pdfs/%Y/%m/%d/')
+    hash = models.CharField(max_length=1000, unique=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
-    csv_output = models.FileField(upload_to='csv_outputs/', null=True, blank=True)
-    file_hash = models.CharField(max_length=64, null=True, blank=True)  # SHA-256 hash
 
     def __str__(self):
-        return f"PDF Document {self.file_hash}"
+        return f"PDF {self.hash[:8]}..." # Displaying the first 8 characters of the hash
 
-    def calculate_file_hash(self):
-        """
-        Calculate SHA-256 hash of the PDF file
 
-        Returns:
-            str: Hexadecimal hash of the file
-        """
-        hash_sha256 = hashlib.sha256()
-        with self.file.open('rb') as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_sha256.update(chunk)
-        return hash_sha256.hexdigest()
+class CsvFile(models.Model):
+    pdf = models.ForeignKey(Pdf, on_delete=models.CASCADE, related_name='csv_files')
+    file = models.FileField(max_length=1000, upload_to='csvs/%Y/%m/%d/')
+    extracted_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"CSV for {self.pdf.hash[:8]}..."
