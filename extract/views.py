@@ -1,6 +1,7 @@
 import os
 import traceback
 
+from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -67,3 +68,36 @@ class PdfTableExtractorView(APIView):
             # Cleanup temporary PDF if it exists
             if pdf_path and os.path.exists(pdf_path):
                 os.remove(pdf_path)
+
+
+class PdfProcessingStatusView(APIView):
+    """
+    GET endpoint to check the status of a PDF processing task.
+    """
+
+    def get(self, request, hash, *args, **kwargs):
+        try:
+            pdf_instance = get_object_or_404(Pdf, hash=hash)
+
+            # Check if a CSV file exists for the PDF
+            csv_instance = CsvFile.objects.filter(pdf=pdf_instance).first()
+            if csv_instance:
+                return Response({
+                    'status': 'complete',
+                    'pdf_url': request.build_absolute_uri(f'/media/{pdf_instance.file.name}'),
+                    'csv_url': request.build_absolute_uri(f'/media/{csv_instance.file.name}')
+                }, status=status.HTTP_200_OK)
+
+            # Check for error details
+            error_file_path = f'errors/{hash}.txt'  # Assuming errors are stored in a dedicated folder
+            error_file_full_path = os.path.join('media', error_file_path)
+            if os.path.exists(error_file_full_path):
+                return Response({
+                    'status': 'failed',
+                    'error_file_url': request.build_absolute_uri(f'/media/{error_file_path}')
+                }, status=status.HTTP_200_OK)
+
+            return Response({'status': 'in-progress'}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
