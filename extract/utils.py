@@ -1,136 +1,147 @@
-import logging
+import hashlib
+import os
+import traceback
 
 import pandas as pd
-import tabula
+import pdfplumber
+from django.conf import settings
+from django.core.files.base import ContentFile
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-def extract_tables_from_pdf(pdf_path, pages='all', multiple_tables=True, guess=True):
-    """
-    Enhanced PDF table extraction with multiple strategies
-
-    Args:
-        pdf_path (str): Path to the PDF file
-        pages (str/list): Pages to extract tables from. 'all' or list of page numbers
-        multiple_tables (bool): Allow multiple tables
-        guess (bool): Use Tabula's guessing algorithm
-
-    Returns:
-        list: List of pandas DataFrames containing extracted tables
-    """
-    try:
-        # Strategy 1: Default extraction with guessing
-        tables = tabula.read_pdf(pdf_path, pages=pages, multiple_tables=multiple_tables, guess=guess)
-
-        if tables and len(tables) > 0:
-            logger.info(f"Found {len(tables)} tables using default extraction")
-            return tables
-
-        # Strategy 2: No guessing, default settings
-        tables = tabula.read_pdf(pdf_path, pages=pages, multiple_tables=multiple_tables, guess=False)
-
-        if tables and len(tables) > 0:
-            logger.info(f"Found {len(tables)} tables without guessing")
-            return tables
-
-        # Strategy 3: Extraction with alternative parameters
-        alternative_strategies = [
-            {'stream': True},  # Streaming mode
-            {'lattice': True},  # Grid-based detection
-            {'stream': True, 'guess': False},
-            {'lattice': True, 'guess': False}
-        ]
-
-        for strategy in alternative_strategies:
-            tables = tabula.read_pdf(pdf_path, pages=pages, multiple_tables=multiple_tables, **strategy)
-
-            if tables and len(tables) > 0:
-                logger.info(f"Found {len(tables)} tables using strategy: {strategy}")
-                return tables
-
-        # Manual parsing if automated methods fail
-        tables = manual_table_extraction(pdf_path)
-
-        if tables and len(tables) > 0:
-            logger.info(f"Found {len(tables)} tables using manual extraction")
-            return tables
-
-        logger.warning("No tables found in PDF using any extraction method")
-        return []
-
-    except Exception as e:
-        logger.error(f"Error in table extraction: {e}")
-        return []
+from django.core.files.storage import default_storage
 
 
-def manual_table_extraction(pdf_path):
-    """
-    Manual table extraction for complex PDFs
-
-    Args:
-        pdf_path (str): Path to the PDF file
-
-    Returns:
-        list: List of manually parsed tables
-    """
-    try:
-        import camelot
-
-        # Use camelot for alternative table extraction
-        tables = camelot.read_pdf(pdf_path, pages='all')
-
-        if tables:
-            # Convert camelot tables to pandas DataFrames
-            pandas_tables = [table.df for table in tables]
-            return pandas_tables
-
-        return []
-
-    except ImportError:
-        logger.warning("Camelot library not installed. Skipping manual extraction.")
-        return []
-
-
-def save_tables_to_csv(tables, output_path):
-    """
-    Save extracted tables to a CSV file
-
-    Args:
-        tables (list): List of pandas DataFrames
-        output_path (str): Path to save the CSV file
-
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    try:
-        # Clean and process tables
-        cleaned_tables = []
-        for df in tables:
-            # Remove empty rows and columns
-            df = df.dropna(how='all')
-            df = df.dropna(axis=1, how='all')
-
-            # Clean column names
-            df.columns = [str(col).strip() for col in df.columns]
-
-            cleaned_tables.append(df)
-
-        # Combine or save tables
-        if len(cleaned_tables) > 1:
-            combined_df = pd.concat(cleaned_tables, ignore_index=True)
-        elif len(cleaned_tables) == 1:
-            combined_df = cleaned_tables[0]
-        else:
-            return False
-
-        # Save to CSV
-        combined_df.to_csv(output_path, index=False)
-        logger.info(f"Saved {len(cleaned_tables)} tables to {output_path}")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error saving tables to CSV: {e}")
+def validate_file(file):
+    """Additional file validation"""
+    # Check file size (e.g., max 10MB)
+    if file.size > 10 * 1024 * 1024:
         return False
+
+    # Check file extension
+    allowed_extensions = ['pdf']
+    file_extension = file.name.split('.')[-1].lower()
+    return file_extension in allowed_extensions
+
+
+def generate_file_hash(file):
+    """Generates a hash for the PDF file."""
+    file.seek(0)  # Make sure the file pointer is at the start
+    file_hash = hashlib.sha256()
+    for chunk in file.chunks():
+        file_hash.update(chunk)
+    return file_hash.hexdigest()
+
+
+def save_temp_pdf(file):
+    """Saves the PDF file temporarily."""
+    temp_path = os.path.join(settings.MEDIA_ROOT, 'temp', file.name)
+    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+    with open(temp_path, 'wb') as temp_file:
+        for chunk in file.chunks():
+            temp_file.write(chunk)
+    return temp_path
+
+
+def extract_tables(pdf_path):
+    """Extracts tables from the PDF using pdfplumber."""
+    tables = []
+    error_details = None
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                table = page.extract_table()
+                if table:
+                    # Clean and standardize the table data
+                    cleaned_table = clean_table_data(table)
+                    tables.append(pd.DataFrame(cleaned_table[1:], columns=cleaned_table[0]))
+
+    except Exception as e:
+        # Capture detailed error information
+        error_details = traceback.format_exc()
+
+    return tables, error_details
+
+
+def save_error_details(file_hash, error_details):
+    """
+    Save error details to a text file
+
+    Args:
+    - file_hash: Unique identifier for the file
+    - error_details: Error traceback or details
+
+    Returns:
+    - Path to the saved error file
+    """
+    # Generate error file path
+    error_file_path = f'errors/{file_hash}_error.txt'
+
+    # Save error details using Django's default storage
+    default_storage.save(
+        error_file_path,
+        ContentFile(str(error_details).encode('utf-8'))
+    )
+
+    return error_file_path
+
+
+def clean_table_data(table):
+    """
+    Clean and standardize the table data
+    - Remove empty rows and columns
+    - Ensure proper header alignment
+    - Remove unnecessary whitespace
+    """
+    # Remove completely empty rows
+    cleaned_table = [row for row in table if any(cell and str(cell).strip() for cell in row)]
+
+    # Find the first row with meaningful headers
+    header_row = next((row for row in cleaned_table if any(cell and str(cell).strip() for cell in row)), None)
+
+    if header_row is None:
+        return table
+
+    # Get the index of the header row
+    header_index = cleaned_table.index(header_row)
+
+    # Extract headers, removing None or empty values
+    headers = [str(cell).strip() if cell else f'Column_{i}' for i, cell in enumerate(header_row)]
+
+    # Get data rows, skipping header and empty rows
+    data_rows = cleaned_table[header_index + 1:]
+
+    # Clean and align data rows
+    cleaned_data_rows = []
+    for row in data_rows:
+        # Ensure row has same length as headers, filling with empty string if needed
+        cleaned_row = [str(cell).strip() if cell is not None else '' for cell in row[:len(headers)]]
+        while len(cleaned_row) < len(headers):
+            cleaned_row.append('')
+        cleaned_data_rows.append(cleaned_row)
+
+    # Combine headers and data
+    return [headers] + cleaned_data_rows
+
+
+def save_table_as_csv(tables, file_hash):
+    """Saves the extracted tables as CSV files."""
+    table = tables[0]  # Save only the first table
+
+    # Clean column names
+    table.columns = [col.strip() for col in table.columns]
+
+    # Remove any completely empty columns
+    table = table.dropna(axis=1, how='all')
+
+    # Remove any completely empty rows
+    table = table.dropna(how='all')
+
+    # Reset index to ensure clean output
+    table = table.reset_index(drop=True)
+    # Generate CSV content
+    csv_content = table.to_csv(index=False)
+
+    # Save file using Django's storage
+    csv_path = f'csv/{file_hash}.csv'
+    default_storage.save(csv_path, ContentFile(csv_content.encode('utf-8')))
+
+    return csv_path
