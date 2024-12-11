@@ -34,6 +34,8 @@ class PDFUploadView(APIView):
             # Create a unique filename
             original_filename = pdf_file.name
             file_extension = os.path.splitext(original_filename)[1]
+            if file_extension not in ['.pdf']:
+                return Response({"error": "Only pdf is allowed"})
             unique_filename = f"{uuid.uuid4()}{file_extension}"
 
             # Prepare file paths
