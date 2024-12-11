@@ -101,3 +101,28 @@ class PdfProcessingStatusView(APIView):
 
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class PdfListView(APIView):
+    """
+    GET endpoint to list all PDFs and their corresponding CSVs.
+    """
+
+    def get(self, request, *args, **kwargs):
+        try:
+            pdfs = Pdf.objects.all()
+            pdf_list = []
+
+            for pdf in pdfs:
+                csv_instance = CsvFile.objects.filter(pdf=pdf).first()
+                pdf_list.append({
+                    'hash': pdf.hash,
+                    'uploaded_at': pdf.uploaded_at,
+                    'pdf_url': request.build_absolute_uri(f'/media/{pdf.file.name}'),
+                    'csv_url': request.build_absolute_uri(f'/media/{csv_instance.file.name}') if csv_instance else None
+                })
+
+            return Response({'pdfs': pdf_list}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
