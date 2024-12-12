@@ -123,24 +123,32 @@ def clean_table_data(table):
 
 def save_table_as_csv(tables, file_hash):
     """Saves the extracted tables as CSV files."""
-    table = tables[0]  # Save only the first table
+    global table
+    if not tables or not isinstance(tables[0], (pd.DataFrame, list, dict)):
+        raise ValueError("The first element of 'tables' must be tabular data.")
 
-    # Clean column names
-    table.columns = [col.strip() for col in table.columns]
+    # Preprocess tables[0] into a DataFrame
+    if isinstance(tables[0], pd.DataFrame):
+        table = tables[0]
+    elif isinstance(tables[0], list):
+        try:
+            table = pd.DataFrame(tables[0])
+        except ValueError as e:
+            print(f"Error converting to DataFrame: {e}")
+            # Attempt to normalize irregular data
+            normalized_data = [row if isinstance(row, list) else [row] for row in tables[0]]
+            table = pd.DataFrame(normalized_data)
+    elif isinstance(tables[0], dict):
+        table = pd.DataFrame([tables[0]])
 
-    # Remove any completely empty columns
-    table = table.dropna(axis=1, how='all')
+    # Use a relative path within MEDIA_ROOT
+    relative_path = os.path.join('csv', f'{file_hash}.csv')
+    full_path = os.path.join(settings.MEDIA_ROOT, relative_path)
 
-    # Remove any completely empty rows
-    table = table.dropna(how='all')
+    # Ensure the directory exists
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
-    # Reset index to ensure clean output
-    table = table.reset_index(drop=True)
-    # Generate CSV content
-    csv_content = table.to_csv(index=False)
+    # Save the CSV
+    table.to_csv(full_path, index=False)
 
-    # Save file using Django's storage
-    csv_path = f'csv/{file_hash}.csv'
-    default_storage.save(csv_path, ContentFile(csv_content.encode('utf-8')))
-
-    return csv_path
+    return relative_path
