@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import CsvFile, Pdf
-from .utils import validate_file, generate_file_hash, save_temp_pdf, extract_tables, save_table_as_csv, save_error_details
+from .utils import extract_tables, generate_file_hash, save_error_details, save_table_as_csv, save_temp_pdf, validate_file
 
 
 class PdfTableExtractorView(APIView):

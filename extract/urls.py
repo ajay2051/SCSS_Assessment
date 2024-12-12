@@ -1,6 +1,6 @@
 from django.urls import path
 
-from extract.views import PdfTableExtractorView, PdfProcessingStatusView, PdfListView
+from extract.views import PdfListView, PdfProcessingStatusView, PdfTableExtractorView
 
 urlpatterns = [
     path('extract-table/', PdfTableExtractorView.as_view(), name='extract-table'),
