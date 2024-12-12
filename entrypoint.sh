@@ -24,4 +24,4 @@ python3 manage.py migrate
 # Start Django Sever
 echo "===================👌🙏🔥 Starting Django server 👌🙏🔥============================"
 #exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-gunicorn --bind 0.0.0.0:8000 --reload project.wsgi
+python manage.py runserver
